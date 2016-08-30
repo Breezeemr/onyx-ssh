@@ -1,0 +1,21 @@
+/target
+/classes
+/checkouts
+pom.xml
+pom.xml.asc
+*.jar
+*.class
+/.lein-*
+/.nrepl-port
+
+onyx.log
+
+# emacs
+[#]*[#]
+.[#]*
+*~
+
+# intellij
+/.idea/**
+!/.idea/misc.xml
+*.iml
