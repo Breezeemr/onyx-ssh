@@ -1,7 +1,6 @@
 (ns onyx.plugin.ssh-output
   (:require [onyx.peer.function :as function]
             [onyx.peer.pipeline-extensions :as p-ext]
-            [onyx.static.default-vals :refer [defaults arg-or-default]]
             [taoensso.timbre :refer [debug info] :as timbre]
             [clojure.java.io :refer [input-stream]]
             [clj-ssh.ssh :as ssh]))
@@ -19,7 +18,7 @@
 (def writer-calls
   {:lifecycle/before-task-start inject-writer})
 
-(defrecord SFTPPut [agent session]
+(defrecord SFTPPut [agent args]
   ;; Read batch can generally be left as is. It simply takes care of
   ;; receiving segments from the ingress task
   p-ext/Pipeline
@@ -33,11 +32,12 @@
       ;; Messages are on the leaves :tree, as :onyx/fn is called
       ;; and each incoming segment may return n segments
       [_ {:keys [onyx.core/results ssh/ssh-datasink] :as event}]
-    (ssh/with-connection session
-      (let [channel (ssh/ssh-sftp session)]
-        (doseq [{message :message} (mapcat :leaves (:tree results))]
-          (ssh/ssh-sftp-cmd channel :put [(input-stream (:payload message)) (:filename message)]
-                            {}))))
+    (let [session (ssh/session agent (:server-address args) args)]
+      (ssh/with-connection session
+        (let [channel (ssh/ssh-sftp session)]
+          (doseq [{message :message} (mapcat :leaves (:tree results))]
+            (ssh/ssh-sftp-cmd channel :put [(input-stream (:payload message)) (:filename message)]
+                              {})))))
     (doseq [msg (mapcat :leaves (:tree results))]
       (swap! ssh-datasink conj (:message msg)))
     {})
@@ -56,8 +56,8 @@
 ;; from your task-map here, in order to improve the performance of your plugin
 ;; Extending the function below is likely good for most use cases.
 (defn sftp-output [{:keys [onyx.core/task-map] :as pipeline-data}]
-  (let [{:keys [ssh-output/username ssh-output/password ssh-output/server-address]} task-map
+  (let [{:keys [ssh-output/username ssh-output/password ssh-output/server-address ssh-output/server-port]} task-map
         agent (ssh/ssh-agent {:use-system-ssh-agent false})
-        session (ssh/session agent server-address {:username username
-                                                   :password password})]
-    (->SFTPPut agent session)))
+        args (into {:username username :password password :server-address server-address}
+                   (when server-port {:port server-port}))]
+    (->SFTPPut agent args)))

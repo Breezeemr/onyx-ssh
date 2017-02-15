@@ -24,22 +24,25 @@
    :onyx.messaging/peer-port 40200
    :onyx.messaging/bind-addr "localhost"})
 
-(def env (onyx.api/start-env env-config))
-
-(def peer-group (onyx.api/start-peer-group peer-config))
-
 (def n-messages 100)
 
 (def batch-size 20)
 
+(def kill-channel (chan 0))
+
 (def catalog
   [{:onyx/name :in
-    :onyx/plugin :onyx.plugin.ssh-input/input
+    :onyx/plugin :onyx.plugin.ssh-input/test-input
     :onyx/type :input
     :onyx/medium :ssh
     :onyx/batch-size batch-size
     :onyx/max-peers 1
-    :onyx/doc "Documentation for your datasource"}
+    :onyx/doc "Documentation for your datasource"
+    ;; :ssh-input/target-directories ["/tmp/testsftp"]
+    :ssh-input/server-address "localhost"
+    :ssh-input/username "hhutch"
+    :ssh-input/password "XXXX"
+    :ssh-input/test-script [["/tmp/testsftp/bonafide" "/tmp/testsftp/foobar"]]}
 
    {:onyx/name :out
     :onyx/plugin :onyx.plugin.core-async/output
@@ -56,7 +59,7 @@
 (def out-chan (chan (sliding-buffer (inc n-messages))))
 
 (defn inject-in-datasource [event lifecycle]
-  {:ssh/example-datasource in-datasource})
+  {})
 
 (defn inject-out-ch [event lifecycle]
   {:core.async/chan out-chan})
@@ -77,32 +80,36 @@
    {:lifecycle/task :out
     :lifecycle/calls :onyx.plugin.core-async/writer-calls}])
 
-(doseq [n (range n-messages)]
-  (swap! in-datasource conj {:n n}))
+(deftest testing-input
+  (def env (onyx.api/start-env env-config))
 
-(swap! in-datasource conj :done)
+  (def peer-group (onyx.api/start-peer-group peer-config))
 
-(def v-peers (onyx.api/start-peers 2 peer-group))
 
-(onyx.api/submit-job
- peer-config
- {:catalog catalog
-  :workflow workflow
-  :lifecycles lifecycles
-  :task-scheduler :onyx.task-scheduler/balanced})
+  (doseq [n (range n-messages)]
+    (swap! in-datasource conj {:n n}))
 
-(def results (take-segments! out-chan))
+  (swap! in-datasource conj :done)
 
-(deftest testing-output
+  (def v-peers (onyx.api/start-peers 2 peer-group))
+
+  (onyx.api/submit-job
+   peer-config
+   {:catalog catalog
+    :workflow workflow
+    :lifecycles lifecycles
+    :task-scheduler :onyx.task-scheduler/balanced})
+
+  (def results (take-segments! out-chan))
+
   (testing "Input is received at output"
     (let [expected (set (map (fn [x] {:n x}) (range n-messages)))]
-    (is (= expected (set (butlast results))))
-    (is (= :done (last results))))))
+      (is (= [] results))
+      (is (= :done (last results)))))
 
+  (doseq [v-peer v-peers]
+    (onyx.api/shutdown-peer v-peer))
 
-(doseq [v-peer v-peers]
-  (onyx.api/shutdown-peer v-peer))
+  (onyx.api/shutdown-peer-group peer-group)
 
-(onyx.api/shutdown-peer-group peer-group)
-
-(onyx.api/shutdown-env env)
+  (onyx.api/shutdown-env env))
